@@ -1,100 +1,114 @@
-struct Parser<'a, T> {
-    parser: Box<dyn Fn(String) -> Option<(T, String)> + 'a>,
-}
-
 #[allow(dead_code)]
-impl<'a, A: Clone> Parser<'a, A>
-where
-    A: 'a,
-{
-    fn parse(&self, str: String) -> Option<(A, String)> {
-        let out = (self.parser)(str);
-        return out;
-    }
 
-    fn map<B>(&'a self, f: &'a Fn(&A) -> B) -> Parser<'a, B> {
-        return Parser {
-            parser: Box::new(move |str| self.parse(str).map(|(s, str)| (f(&s), str))),
-        };
-    }
 
-    fn new(inp: A) -> Parser<'a, A> {
-        Parser {
-            parser: Box::new(move |str| Some((inp.clone(), str))),
+type ParserOutput<'a, A> = Option<(A, &'a str)>;
+type Parser<A> = Fn (&str) -> ParserOutput<A>;
+
+fn get_value<'a, A>(s :&'a ParserOutput<A>) -> Option<&'a A> {
+    let a = s.as_ref()?;
+    Some(&a.0)
+}
+
+fn get_str<'a, A>(s :&'a ParserOutput<A> ) -> Option<&'a str> {
+    let a = s.as_ref()?;
+    Some(&a.1)
+}
+
+fn parserMap<'a, A,B>(s :ParserOutput<'a, A>, f : &Fn(A) -> B) -> ParserOutput<'a, B> {
+    s.map(|(v, rest)| (f(v), rest))
+}
+
+fn item(input :&str) -> ParserOutput<char> {
+    let item = input.chars().next()?;
+    let rest = input.get(1..)?;
+    Some((item, rest))
+}
+
+fn get_if<'a, A>(inp : &'a str, p :&Parser<A>, f : &Fn(&A) -> bool) -> ParserOutput<'a, A> {
+    let (a, out) = p(inp)?;
+    if f(&a) {
+        return Some((a,out));
+    }
+    None
+}
+
+fn is_numeric<'a>(input :&'a str) -> ParserOutput<char> {
+    get_if(input, &item, &|c| c.is_numeric())
+}
+
+fn is_alphabetic<'a>(input :&'a str) -> ParserOutput<char> {
+    get_if(input, &item, &|c| c.is_alphabetic())
+}
+
+fn get_all<'a, A>(input :&'a str, p :&Parser<A>) -> ParserOutput<'a, Vec<A>> {
+    let mut ret : Vec<A> = Vec::new();
+    let mut rest = input;
+
+    loop {
+        match p(rest) {
+            Some((a, s)) => {
+                ret.push(a);
+                rest = s;
+            }
+            None => break
         }
     }
 
-    fn and_then<B: Clone>(&'a self, f: &'a Fn(&A) -> Parser<'a, B>) -> Parser<'a, B> {
-        Parser {
-            parser: Box::new(move |str| {
-                let temp = self.parse(str);
-                match temp {
-                    Some((a, out)) => f(&a).parse(out),
-                    None => None,
-                }
-            }),
-        }
+    Some((ret, rest))
+}
+
+fn at_least_one<'a, A>(input :&'a str, p :&Parser<A>) -> ParserOutput<'a, Vec<A>> {
+    let ret = get_all(input, p);
+    if get_value(&ret).map_or(false, | a | a.len() > 0) {
+        return ret;
     }
-
+    None
 }
 
-
-fn is_true<'a, A :Clone>(p :Parser<'a, A>, f: &'a Fn(&A) -> bool) -> Parser<'a, A>
-{
-    Parser {
-        parser: Box::new(move |str| {
-            let (a, st) = p.parse(str)?;
-            if f(&a) {
-                return Some((a, st));
-            }
-            None
-        })
-    }
+fn word<'a>(input :&'a str) -> ParserOutput<'a, String> {
+    parserMap(at_least_one(input, &is_alphabetic),
+              &|a| a.into_iter().collect() )
 }
 
-fn item() -> Parser<'static, char> {
-    Parser {
-        parser: Box::new(move |str: String| {
-            if str.len() > 0 {
-                return Some((str.chars().next().unwrap(), str[1..].to_string()));
-            }
-            None
-        }),
-    }
+fn white_space<'a>(input :&'a str)  -> ParserOutput<'a, char> {
+     get_if(input, &item, &|c| c.is_whitespace())
 }
 
-fn is_numeric() -> Parser<'static, char> {
-    is_true(item(),
-            &|a :& char| a.is_numeric()
-           )
+fn clear_white_space<'a>(input :&'a str) -> ParserOutput<'a, ()>{
+    parserMap(get_all(input, &white_space),
+              &|_| ())
 }
 
+fn keyword<'a>(input :&'a str, keyword :& str)  -> ParserOutput<'a, ()> {
+    word(input).and_then(&|(v,rest)| {
+        if v == keyword
+          { return Some(((),rest));
+          }
+        None
 
-fn myvectormap<A, B, F>(f: &F) -> impl Fn(Vec<A>) -> Vec<B> + '_
-where
-    F: Fn(&A) -> B,
-{
-    move |inp| inp.iter().map(f).collect()
+    })
 }
 
 fn main() {
-    let a = Parser {
-        parser: Box::new(|x| {
-            return Some((0, x));
-        }),
-    };
+    println!("{:#?}", item("Foo"));
+    println!("{:#?}", item("Ba"));
+    println!("{:#?}", item("B"));
+    println!("{:#?}", item(""));
 
-    let b = a.parse("Hello, world!".to_string());
+    println!("{:#?}", is_numeric(""));
+    println!("{:#?}", is_numeric("a"));
+    println!("{:#?}", is_numeric("01"));
 
-    println!("{:#?}", b);
 
-    let a: fn(&i32) -> i32 = |&x| x + 1;
-    let f = myvectormap(&a);
+    println!("{:#?}", get_all("01f", &is_numeric));
+    println!("{:#?}", at_least_one("", &item));
+    println!("{:#?}", at_least_one("1", &item));
+    println!("{:#?}", at_least_one("12f", &is_numeric));
 
-    println!("{:#?}", f(vec!(1, 2, 3)));
-    println!("{:#?}", item().parse("Foo".to_string()));
-    println!("{:#?}", item().parse("".to_string()));
-    println!("{:#?}", is_numeric().parse("".to_string()));
-    println!("{:#?}", is_numeric().parse("a".to_string()));
-    println!("{:#?}", is_numeric().parse("01".to_string()));
+    println!("{:#?}", word("Als ich"));
+    println!("{:#?}", word("Als1 ich"));
+
+
+    println!("{:#?}", clear_white_space("  aba"));
+    println!("{:#?}", keyword("Foo Bar", "Foo"));
 }
