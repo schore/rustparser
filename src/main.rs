@@ -1,25 +1,14 @@
 #[allow(dead_code)]
-
 #[derive(Clone, Debug)]
-struct ParserOutput<A:Clone> (Option<(A, String)>);
-struct Parser<A :Clone> (fn(&String) -> ParserOutput<A>);
+struct ParserOutput<A: Clone>(Option<(A, String)>);
+struct Parser<A: Clone, F>(F)
+where
+    F: Fn(&String) -> ParserOutput<A>;
 
-
-impl<A : Clone> ParserOutput<A> {
-    fn value(&self) -> Option<A> {
-        let (a, _) = (&self.0).as_ref()?;
-        Some(a.clone())
-    }
-
-    fn str(&self) -> Option<String>{
-        match &self.0 {
-            Some((_,s)) => { return Some(s.clone()); }
-            None => {return None}
-        }
-    }
-
-    fn only_if<F>( &self, f : F) -> ParserOutput<A>
-    where F : FnOnce(&A) -> bool
+impl<A: Clone> ParserOutput<A> {
+    fn only_if<F>(&self, f: F) -> ParserOutput<A>
+    where
+        F: FnOnce(&A) -> bool,
     {
         match &self.0 {
             Some((value, s)) => {
@@ -28,68 +17,81 @@ impl<A : Clone> ParserOutput<A> {
                 }
                 return ParserOutput(None);
             }
-            None => return ParserOutput(None)
+            None => return ParserOutput(None),
         }
     }
 
-    fn map<B:Clone, F> (&self, f : F) -> ParserOutput<B>
-    where F : FnOnce(&A) -> B
+    fn map<B: Clone, F>(&self, f: F) -> ParserOutput<B>
+    where
+        F: FnOnce(&A) -> B,
     {
         match &self.0 {
-            Some((v,s)) => {return ParserOutput(Some((f(v), s.clone())));}
-            None => return ParserOutput(None)
+            Some((v, s)) => {
+                return ParserOutput(Some((f(v), s.clone())));
+            }
+            None => return ParserOutput(None),
         }
     }
 
-    fn and_then<B :Clone> (&self, parser: &Parser<B>) -> ParserOutput<B> {
+    fn and_then<B: Clone, F>(&self, parser: &Parser<B, F>) -> ParserOutput<B>
+    where
+        F: Fn(&String) -> ParserOutput<B>,
+    {
         match &self.0 {
-            Some((_,s)) => parser.parse(&s),
+            Some((_, s)) => parser.parse(&s),
             None => ParserOutput(None),
         }
     }
 }
 
-impl <A :Clone> Parser<A> {
-    fn parse(&self, input : &String) -> ParserOutput<A> {
-        (&self.0)(input)
+impl<A: Clone, F> Parser<A, F>
+where
+    F: Fn(&String) -> ParserOutput<A>,
+{
+    fn parse(&self, input: &String) -> ParserOutput<A> {
+        (self.0)(input)
     }
-
-    // fn or(&self, p2: &Parser<A>) -> Parser<A> {
-    //      Parser(|input :&String| or(input, self, p2))
-    // }
 }
 
-fn or<A :Clone> (input :&String, p1: &Parser<A>, p2 : &Parser<A>) -> ParserOutput<A> {
+fn or<A: Clone, F1, F2>(input: &String, p1: &Parser<A, F1>, p2: &Parser<A, F2>) -> ParserOutput<A>
+where
+    F1: Fn(&String) -> ParserOutput<A>,
+    F2: Fn(&String) -> ParserOutput<A>,
+{
     let result1 = p1.parse(input);
     match &result1.0 {
         Some(_) => result1,
-        None => p2.parse(input)
+        None => p2.parse(input),
     }
 }
 
-fn item(input :&String) -> ParserOutput<char> {
+fn item(input: &String) -> ParserOutput<char> {
     let item = input.chars().next();
     let rest = input.get(1..);
 
     if item.and(rest).is_some() {
-        return ParserOutput(Some((item.unwrap_or_default(),
-                                 rest.unwrap_or_default().to_string())));
+        return ParserOutput(Some((
+            item.unwrap_or_default(),
+            rest.unwrap_or_default().to_string(),
+        )));
     }
 
     ParserOutput(None)
 }
 
-fn is_numeric(input :&String) -> ParserOutput<char> {
+fn is_numeric(input: &String) -> ParserOutput<char> {
     item(input).only_if(|c| c.is_numeric())
 }
 
-fn is_alphabetic<'a>(input :&String) -> ParserOutput<char> {
+fn is_alphabetic<'a>(input: &String) -> ParserOutput<char> {
     item(input).only_if(|c| c.is_alphabetic())
 }
 
-fn get_all<A :Clone> (input : &String, parser : &Parser<A>) -> ParserOutput<Vec<A>>
+fn get_all<A: Clone, F>(input: &String, parser: &Parser<A, F>) -> ParserOutput<Vec<A>>
+where
+    F: Fn(&String) -> ParserOutput<A>,
 {
-    let mut ret : Vec<A> = Vec::new();
+    let mut ret: Vec<A> = Vec::new();
     let mut rest = input.clone();
     loop {
         match parser.parse(&rest).0 {
@@ -97,36 +99,33 @@ fn get_all<A :Clone> (input : &String, parser : &Parser<A>) -> ParserOutput<Vec<
                 ret.push(value);
                 rest = s;
             }
-            None => break
+            None => break,
         }
     }
     ParserOutput(Some((ret, rest)))
 }
 
-fn at_least_one<A : Clone>(input :&String, parser :&Parser<A>) -> ParserOutput< Vec<A>> {
+fn at_least_one<A: Clone, F>(input: &String, parser: &Parser<A, F>) -> ParserOutput<Vec<A>>
+where
+    F: Fn(&String) -> ParserOutput<A>,
+{
     get_all(input, parser).only_if(|v| v.len() > 0)
 }
 
-
-fn word(input : &String) -> ParserOutput<String> {
-    at_least_one(input, &Parser(is_alphabetic))
-        .map(|r| r.into_iter().collect())
+fn word(input: &String) -> ParserOutput<String> {
+    at_least_one(input, &Parser(is_alphabetic)).map(|r| r.into_iter().collect())
 }
 
-fn white_space(input :&String)  -> ParserOutput<char> {
+fn white_space(input: &String) -> ParserOutput<char> {
     item(input).only_if(|c| c.is_whitespace())
 }
 
-fn clear_white_space(input :&String) -> ParserOutput<()>
-{
-    get_all(input, &Parser(white_space))
-        .map(|_| ())
+fn clear_white_space(input: &String) -> ParserOutput<()> {
+    get_all(input, &Parser(white_space)).map(|_| ())
 }
 
-fn keyword(input :& String, keyword :&str)  -> ParserOutput<()> {
-    word(input)
-        .only_if(|w| w == keyword)
-        .map(|_| ())
+fn keyword(input: &String, keyword: &str) -> ParserOutput<()> {
+    word(input).only_if(|w| w == keyword).map(|_| ())
 }
 
 fn main() {
@@ -139,11 +138,13 @@ fn main() {
     println!("{:#?}", is_numeric(&"a".to_string()));
     println!("{:#?}", is_numeric(&"01".to_string()));
 
-
     println!("{:#?}", get_all(&"01f".to_string(), &Parser(is_numeric)));
     println!("{:#?}", at_least_one(&"".to_string(), &Parser(item)));
     // println!("{:#?}", at_least_one("1", &item));
-    println!("{:#?}", at_least_one(&"12f".to_string(), &Parser(is_numeric)));
+    println!(
+        "{:#?}",
+        at_least_one(&"12f".to_string(), &Parser(is_numeric))
+    );
 
     println!("{:#?}", word(&"Als ich".to_string()));
     println!("{:#?}", word(&"Als1 ich".to_string()));
