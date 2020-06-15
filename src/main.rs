@@ -1,114 +1,153 @@
 #[allow(dead_code)]
 
+#[derive(Clone, Debug)]
+struct ParserOutput<A:Clone> (Option<(A, String)>);
+struct Parser<A :Clone> (fn(&String) -> ParserOutput<A>);
 
-type ParserOutput<'a, A> = Option<(A, &'a str)>;
-type Parser<A> = Fn (&str) -> ParserOutput<A>;
 
-fn get_value<'a, A>(s :&'a ParserOutput<A>) -> Option<&'a A> {
-    let a = s.as_ref()?;
-    Some(&a.0)
-}
-
-fn get_str<'a, A>(s :&'a ParserOutput<A> ) -> Option<&'a str> {
-    let a = s.as_ref()?;
-    Some(&a.1)
-}
-
-fn parserMap<'a, A,B>(s :ParserOutput<'a, A>, f : &Fn(A) -> B) -> ParserOutput<'a, B> {
-    s.map(|(v, rest)| (f(v), rest))
-}
-
-fn item(input :&str) -> ParserOutput<char> {
-    let item = input.chars().next()?;
-    let rest = input.get(1..)?;
-    Some((item, rest))
-}
-
-fn get_if<'a, A>(inp : &'a str, p :&Parser<A>, f : &Fn(&A) -> bool) -> ParserOutput<'a, A> {
-    let (a, out) = p(inp)?;
-    if f(&a) {
-        return Some((a,out));
+impl<A : Clone> ParserOutput<A> {
+    fn value(&self) -> Option<A> {
+        let (a, _) = (&self.0).as_ref()?;
+        Some(a.clone())
     }
-    None
+
+    fn str(&self) -> Option<String>{
+        match &self.0 {
+            Some((_,s)) => { return Some(s.clone()); }
+            None => {return None}
+        }
+    }
+
+    fn only_if<F>( &self, f : F) -> ParserOutput<A>
+    where F : FnOnce(&A) -> bool
+    {
+        match &self.0 {
+            Some((value, s)) => {
+                if f(&value) {
+                    return ParserOutput(Some((value.clone(), s.clone())));
+                }
+                return ParserOutput(None);
+            }
+            None => return ParserOutput(None)
+        }
+    }
+
+    fn map<B:Clone, F> (&self, f : F) -> ParserOutput<B>
+    where F : FnOnce(&A) -> B
+    {
+        match &self.0 {
+            Some((v,s)) => {return ParserOutput(Some((f(v), s.clone())));}
+            None => return ParserOutput(None)
+        }
+    }
+
+    fn and_then<B :Clone> (&self, parser: &Parser<B>) -> ParserOutput<B> {
+        match &self.0 {
+            Some((_,s)) => parser.parse(&s),
+            None => ParserOutput(None),
+        }
+    }
 }
 
-fn is_numeric<'a>(input :&'a str) -> ParserOutput<char> {
-    get_if(input, &item, &|c| c.is_numeric())
+impl <A :Clone> Parser<A> {
+    fn parse(&self, input : &String) -> ParserOutput<A> {
+        (&self.0)(input)
+    }
+
+    // fn or(&self, p2: &Parser<A>) -> Parser<A> {
+    //      Parser(|input :&String| or(input, self, p2))
+    // }
 }
 
-fn is_alphabetic<'a>(input :&'a str) -> ParserOutput<char> {
-    get_if(input, &item, &|c| c.is_alphabetic())
+fn or<A :Clone> (input :&String, p1: &Parser<A>, p2 : &Parser<A>) -> ParserOutput<A> {
+    let result1 = p1.parse(input);
+    match &result1.0 {
+        Some(_) => result1,
+        None => p2.parse(input)
+    }
 }
 
-fn get_all<'a, A>(input :&'a str, p :&Parser<A>) -> ParserOutput<'a, Vec<A>> {
+fn item(input :&String) -> ParserOutput<char> {
+    let item = input.chars().next();
+    let rest = input.get(1..);
+
+    if item.and(rest).is_some() {
+        return ParserOutput(Some((item.unwrap_or_default(),
+                                 rest.unwrap_or_default().to_string())));
+    }
+
+    ParserOutput(None)
+}
+
+fn is_numeric(input :&String) -> ParserOutput<char> {
+    item(input).only_if(|c| c.is_numeric())
+}
+
+fn is_alphabetic<'a>(input :&String) -> ParserOutput<char> {
+    item(input).only_if(|c| c.is_alphabetic())
+}
+
+fn get_all<A :Clone> (input : &String, parser : &Parser<A>) -> ParserOutput<Vec<A>>
+{
     let mut ret : Vec<A> = Vec::new();
-    let mut rest = input;
-
+    let mut rest = input.clone();
     loop {
-        match p(rest) {
-            Some((a, s)) => {
-                ret.push(a);
+        match parser.parse(&rest).0 {
+            Some((value, s)) => {
+                ret.push(value);
                 rest = s;
             }
             None => break
         }
     }
-
-    Some((ret, rest))
+    ParserOutput(Some((ret, rest)))
 }
 
-fn at_least_one<'a, A>(input :&'a str, p :&Parser<A>) -> ParserOutput<'a, Vec<A>> {
-    let ret = get_all(input, p);
-    if get_value(&ret).map_or(false, | a | a.len() > 0) {
-        return ret;
-    }
-    None
+fn at_least_one<A : Clone>(input :&String, parser :&Parser<A>) -> ParserOutput< Vec<A>> {
+    get_all(input, parser).only_if(|v| v.len() > 0)
 }
 
-fn word<'a>(input :&'a str) -> ParserOutput<'a, String> {
-    parserMap(at_least_one(input, &is_alphabetic),
-              &|a| a.into_iter().collect() )
+
+fn word(input : &String) -> ParserOutput<String> {
+    at_least_one(input, &Parser(is_alphabetic))
+        .map(|r| r.into_iter().collect())
 }
 
-fn white_space<'a>(input :&'a str)  -> ParserOutput<'a, char> {
-     get_if(input, &item, &|c| c.is_whitespace())
+fn white_space(input :&String)  -> ParserOutput<char> {
+    item(input).only_if(|c| c.is_whitespace())
 }
 
-fn clear_white_space<'a>(input :&'a str) -> ParserOutput<'a, ()>{
-    parserMap(get_all(input, &white_space),
-              &|_| ())
+fn clear_white_space(input :&String) -> ParserOutput<()>
+{
+    get_all(input, &Parser(white_space))
+        .map(|_| ())
 }
 
-fn keyword<'a>(input :&'a str, keyword :& str)  -> ParserOutput<'a, ()> {
-    word(input).and_then(&|(v,rest)| {
-        if v == keyword
-          { return Some(((),rest));
-          }
-        None
-
-    })
+fn keyword(input :& String, keyword :&str)  -> ParserOutput<()> {
+    word(input)
+        .only_if(|w| w == keyword)
+        .map(|_| ())
 }
 
 fn main() {
-    println!("{:#?}", item("Foo"));
-    println!("{:#?}", item("Ba"));
-    println!("{:#?}", item("B"));
-    println!("{:#?}", item(""));
+    println!("{:#?}", item(&"Foo".to_string()));
+    println!("{:#?}", item(&"Ba".to_string()));
+    println!("{:#?}", item(&"B".to_string()));
+    println!("{:#?}", item(&"".to_string()));
 
-    println!("{:#?}", is_numeric(""));
-    println!("{:#?}", is_numeric("a"));
-    println!("{:#?}", is_numeric("01"));
-
-
-    println!("{:#?}", get_all("01f", &is_numeric));
-    println!("{:#?}", at_least_one("", &item));
-    println!("{:#?}", at_least_one("1", &item));
-    println!("{:#?}", at_least_one("12f", &is_numeric));
-
-    println!("{:#?}", word("Als ich"));
-    println!("{:#?}", word("Als1 ich"));
+    println!("{:#?}", is_numeric(&"".to_string()));
+    println!("{:#?}", is_numeric(&"a".to_string()));
+    println!("{:#?}", is_numeric(&"01".to_string()));
 
 
-    println!("{:#?}", clear_white_space("  aba"));
-    println!("{:#?}", keyword("Foo Bar", "Foo"));
+    println!("{:#?}", get_all(&"01f".to_string(), &Parser(is_numeric)));
+    println!("{:#?}", at_least_one(&"".to_string(), &Parser(item)));
+    // println!("{:#?}", at_least_one("1", &item));
+    println!("{:#?}", at_least_one(&"12f".to_string(), &Parser(is_numeric)));
+
+    println!("{:#?}", word(&"Als ich".to_string()));
+    println!("{:#?}", word(&"Als1 ich".to_string()));
+
+    println!("{:#?}", clear_white_space(&"  aba".to_string()));
+    println!("{:#?}", keyword(&"Foo Bar".to_string(), "Foo"));
 }
