@@ -128,6 +128,13 @@ fn keyword(input: &String, keyword: &str) -> ParserOutput<()> {
     word(input).only_if(|w| w == keyword).map(|_| ())
 }
 
+fn action(input: &String, action: &str) -> ParserOutput<String> {
+    clear_white_space(input)
+        .and_then(&Parser(|x| keyword(x, action)))
+        .and_then(&Parser(clear_white_space))
+        .and_then(&Parser(word))
+}
+
 fn main() {
     println!("{:#?}", item(&"Foo".to_string()));
     println!("{:#?}", item(&"Ba".to_string()));
@@ -151,4 +158,5 @@ fn main() {
 
     println!("{:#?}", clear_white_space(&"  aba".to_string()));
     println!("{:#?}", keyword(&"Foo Bar".to_string(), "Foo"));
+    println!("{:#?}", action(&" do Namaear bla".to_string(), "do"));
 }
