@@ -128,12 +128,41 @@ fn keyword(input: &String, keyword: &str) -> ParserOutput<()> {
     word(input).only_if(|w| w == keyword).map(|_| ())
 }
 
-fn action(input: &String, action: &str) -> ParserOutput<String> {
+#[derive(Clone, Debug)]
+enum Action {
+    doAction(String),
+    entry(String),
+    exit(String)
+}
+
+fn _action(input: &String, action: &str) -> ParserOutput<String> {
     clear_white_space(input)
         .and_then(&Parser(|x| keyword(x, action)))
         .and_then(&Parser(clear_white_space))
         .and_then(&Parser(word))
 }
+
+fn doAction(input: &String) -> ParserOutput<Action> {
+    _action(input, "do")
+        .map(|s| Action::doAction(s.clone()))
+}
+
+fn entryAction(input: &String) -> ParserOutput<Action> {
+    _action(input, "entry")
+        .map(|s| Action::entry(s.clone()))
+}
+
+fn exitAction(input: &String) -> ParserOutput<Action> {
+    _action(input, "exit")
+        .map(|s| Action::exit(s.clone()))
+}
+
+// fn action(input: &String) -> ParserOutput<Action> {
+//     let actionDo = Parser(doAction);
+//     let actionEntry = Parser(entryAction);
+//     let actionExit = Parser(exitAction);
+// }
+
 
 fn main() {
     println!("{:#?}", item(&"Foo".to_string()));
@@ -158,5 +187,5 @@ fn main() {
 
     println!("{:#?}", clear_white_space(&"  aba".to_string()));
     println!("{:#?}", keyword(&"Foo Bar".to_string(), "Foo"));
-    println!("{:#?}", action(&" do Namaear bla".to_string(), "do"));
+    println!("{:#?}", doAction(&" do Namaear bla".to_string()));
 }
