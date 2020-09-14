@@ -1,51 +1,70 @@
 
 #[derive(Clone, Debug)]
 ///The output of the parser
-pub struct ParserOutput<A: Clone>(Option<(A, String)>);
+pub struct ParserOutput<A: Clone>(pub Result<(A, String), String>);
+
 ///A parser
-pub struct Parser<A: Clone>(Box<dyn Fn(&String) -> ParserOutput<A>>);
+pub struct Parser<A: Clone>(pub Box<dyn Fn(&String) -> ParserOutput<A>>);
+
 
 impl<A: Clone> ParserOutput<A> {
-    pub fn only_if<F>(&self, f: F) -> ParserOutput<A>
+    pub fn only_if_message<F>(&self, f: F, message: String) -> ParserOutput<A>
     where
         F: FnOnce(&A) -> bool,
     {
         match &self.0 {
-            Some((value, s)) => {
+            Ok((value, s)) => {
                 if f(&value) {
-                    return ParserOutput(Some((value.clone(), s.clone())));
+                    return ParserOutput(Ok((value.clone(), s.clone())));
                 }
-                return ParserOutput(None);
+                return ParserOutput(Err(message.to_string()));
             }
-            None => return ParserOutput(None),
+            Err(s) => return ParserOutput(Err(s.clone())),
         }
     }
+
+    pub fn only_if<F>(&self, f: F) -> ParserOutput<A>
+    where
+        F: FnOnce(&A) -> bool,
+    {
+        self.only_if_message(f, "If not matched".to_string())
+    }
+
+
 
     pub fn map<B: Clone, F>(&self, f: F) -> ParserOutput<B>
     where
         F: Fn(&A) -> B,
     {
         match &self.0 {
-            Some((v, s)) => {
-                return ParserOutput(Some((f(v), s.clone())));
+            Ok((v, s)) => {
+                return ParserOutput(Ok((f(v), s.clone())));
             }
-            None => return ParserOutput(None),
+            Err(s) => return ParserOutput(Err(s.clone())),
         }
     }
+
 
     pub fn and_then<B: Clone>(&self, parser: &Parser<B>) -> ParserOutput<B> {
         match &self.0 {
-            Some((_, s)) => parser.parse(s),
-            None => ParserOutput(None),
+            Ok((_, s)) => parser.parse(s),
+            Err(s) => ParserOutput(Err(s.clone())),
         }
     }
 
-    pub fn unwrap(self) -> (A, String) {
-        self.0.unwrap()
+    pub fn unwrap(&self) -> (A, String) {
+        self.0.clone().unwrap()
     }
 
     pub fn is_valid(&self) -> bool {
-        self.0.is_some()
+        self.0.is_ok()
+    }
+
+    pub fn set_error(&self, message :String) -> ParserOutput<A>{
+        match self.0 {
+            Ok(_) =>self.clone(),
+            Err(_) => ParserOutput(Err(message))
+        }
     }
 }
 
@@ -67,7 +86,7 @@ impl<A: Clone> Parser<A> {
     {
         Parser::new(move |input: &String| {
             let result = self.parse(input);
-            if result.0.is_some() {
+            if result.is_valid() {
                 return result;
             }
             return p2.parse(input);
@@ -95,11 +114,30 @@ impl<A: Clone> Parser<A> {
     {
         Parser::new(move |input: &String| {
             let result = self.parse(input);
-            if result.0.is_some() && f(&result.0.unwrap().0) {
+            if result.is_valid() && f(&result.0.unwrap().0) {
                 return self.parse(input);
             }
-            return ParserOutput(None);
+            return ParserOutput(Err("if not matched".to_string()));
         })
+    }
+
+    pub fn and_then<B: Clone>(self, p2 :Parser<B> ) -> Parser<B>
+    where
+        A: 'static,
+        B: 'static
+    {
+        Parser::new(move |input: &String| {
+            self.parse(input)
+                .and_then(&p2)
+        })
+    }
+
+    pub fn all(self) -> Parser<Vec<A>>
+    where
+        A: 'static
+
+    {
+        Parser::new(move |s :&String| get_all(s, &self))
     }
 }
 
@@ -114,21 +152,21 @@ pub fn item(input: &String) -> ParserOutput<char> {
     let rest = input.get(1..);
 
     if item.and(rest).is_some() {
-        return ParserOutput(Some((
+        return ParserOutput(Ok((
             item.unwrap_or_default(),
             rest.unwrap_or_default().to_string(),
         )));
     }
 
-    ParserOutput(None)
+    ParserOutput(Err("Nothing left to parse".to_string()))
 }
 
 pub fn is_numeric(input: &String) -> ParserOutput<char> {
-    item(input).only_if(|c| c.is_numeric())
+    item(input).only_if_message(|c| c.is_numeric(), "Expecting numeric".to_string())
 }
 
 pub fn is_alphabetic<'a>(input: &String) -> ParserOutput<char> {
-    item(input).only_if(|c| c.is_alphabetic())
+    item(input).only_if_message(|c| c.is_alphabetic(), "Expecting alphabetic".to_string())
 }
 
 pub fn get_all<A: Clone>(input: &String, parser: &Parser<A>) -> ParserOutput<Vec<A>> {
@@ -136,26 +174,27 @@ pub fn get_all<A: Clone>(input: &String, parser: &Parser<A>) -> ParserOutput<Vec
     let mut rest = input.clone();
     loop {
         match parser.parse(&rest).0 {
-            Some((value, s)) => {
+            Ok((value, s)) => {
                 ret.push(value);
                 rest = s;
             }
-            None => break,
+            Err(_) => break,
         }
     }
-    ParserOutput(Some((ret, rest)))
+    ParserOutput(Ok((ret, rest)))
 }
 
 pub fn at_least_one<A: Clone>(input: &String, parser: &Parser<A>) -> ParserOutput<Vec<A>> {
-    get_all(input, parser).only_if(|v| v.len() > 0)
+    get_all(input, parser).only_if_message(|v| v.len() > 0, "Expecting something".to_string())
 }
 
 pub fn word(input: &String) -> ParserOutput<String> {
-    at_least_one(input, &Parser::new(is_alphabetic)).map(|r| r.into_iter().collect())
+    at_least_one(input, &Parser::new(is_alphabetic))
+        .map(|r| r.into_iter().collect())
 }
 
 pub fn white_space(input: &String) -> ParserOutput<char> {
-    item(input).only_if(|c| c.is_whitespace())
+    item(input).only_if_message(|c| c.is_whitespace(), "Expecting whitespace".to_string())
 }
 
 pub fn clear_white_space(input: &String) -> ParserOutput<()> {
@@ -163,5 +202,13 @@ pub fn clear_white_space(input: &String) -> ParserOutput<()> {
 }
 
 pub fn keyword(input: &String, keyword: &str) -> ParserOutput<()> {
-    word(input).only_if(|w| w == keyword).map(|_| ())
+    word(input).only_if(|w| w == keyword)
+        .set_error(format!("Expecting {}", keyword))
+        .map(|_| ())
+}
+
+pub fn special_char (input: &String, c :char) -> ParserOutput<()> {
+    item(input).only_if(|i| i == &c)
+        .set_error(format!("Expecting {}", c))
+        .map(|_| ())
 }

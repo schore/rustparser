@@ -10,30 +10,73 @@ mod tests {
         Exit(String),
     }
 
-    pub fn _action(input: &String, action: &'static str) -> ParserOutput<String> {
+    fn _action(input: &String, action: &'static str) -> ParserOutput<String> {
         clear_white_space(input)
             .and_then(&Parser::new(move |x| keyword(x, action)))
             .and_then(&Parser::new(clear_white_space))
             .and_then(&Parser::new(word))
     }
 
-    pub fn do_action(input: &String) -> ParserOutput<Action> {
+    fn do_action(input: &String) -> ParserOutput<Action> {
         _action(input, "do").map(|s| Action::DoAction(s.clone()))
     }
 
-    pub fn entry_action(input: &String) -> ParserOutput<Action> {
+    fn entry_action(input: &String) -> ParserOutput<Action> {
         _action(input, "entry").map(|s| Action::Entry(s.clone()))
     }
 
-    pub fn exit_action(input: &String) -> ParserOutput<Action> {
+    fn exit_action(input: &String) -> ParserOutput<Action> {
         _action(input, "exit").map(|s| Action::Exit(s.clone()))
     }
 
-    pub fn action(input: &String) -> ParserOutput<Action> {
+    fn action(input: &String) -> ParserOutput<Action> {
         Parser::new(&do_action)
             .or(Parser::new(&entry_action))
             .or(Parser::new(&exit_action))
             .parse(input)
+    }
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct State {
+        name: String,
+        actions: Vec<Action>
+    }
+
+    fn state(input: &String) -> ParserOutput<State> {
+        let p1 = Parser::new(|s| keyword(s, "state"))
+            .and_then(Parser::new(&clear_white_space))
+            .and_then(Parser::new(&word));
+
+        let name = p1.parse(input);
+
+
+        let actions = name
+            .and_then(&Parser::new(&clear_white_space))
+            .and_then(&Parser::new(|s| special_char(s, '{')))
+            .and_then(&Parser::new(&action).all());
+
+
+        let result = actions
+            .and_then(&Parser::new(clear_white_space))
+            .and_then(&Parser::new(|s| special_char(s, '}')));
+
+        result.map(|_| {
+            State {
+                name: name.clone().unwrap().0,
+                actions: actions.clone().unwrap().0
+            }
+        })
+    }
+
+    #[test]
+    fn test_state() {
+        let p_state = Parser::new(&state);
+
+        assert_eq!(p_state.parse("state abc {entry bar}").0,
+                       Ok((State{
+                           name: "abc".to_string(),
+                           actions: vec!(Action::Entry("bar".to_string()))},
+                           "".to_string())));
     }
 
     #[test]
