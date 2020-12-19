@@ -12,6 +12,7 @@ pipeline {
             steps {
                 sh 'cargo test -- -Z unstable-options --format json | tee results.json'
                 sh 'cat results.json | /root/.cargo/bin/cargo2junit > results.xml'
+                junit 'results.xml'
             }
         }
         stage('Doc') {
