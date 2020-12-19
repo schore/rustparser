@@ -10,7 +10,8 @@ pipeline {
         }
         stage('Test') {
             steps {
-                sh 'cargo test'
+                sh 'cargo-test-junit --name output.xml'
+                junit output.xml
             }
         }
         stage('Doc') {
